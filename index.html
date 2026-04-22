@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>棚卸しアプリ | モマサレース</title>
+
+  <!-- ============================================================
+       Firebase設定
+       ① Firebase Console で プロジェクト作成
+       ② Authentication → メール/パスワード 有効化
+       ③ Firestore Database 作成
+       ④ 下記 FIREBASE_CONFIG を実際の値に書き換え
+       ⑤ Firestore 複合インデックス作成:
+          コレクション: inventory
+          フィールド: date(昇順), goki(昇順), createdAt(昇順)
+       ⑥ 最初の管理者ユーザーは Firebase Console で作成後
+          Firestore の users コレクションに手動追加:
+          { name:"山本", email:"xxx@xxx", role:"admin" }
+  ============================================================ -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    :root{
+      --primary:#16a34a; --primary-d:#15803d; --primary-l:#dcfce7;
+      --danger:#dc2626;  --danger-l:#fee2e2;
+      --text:#1f2937;    --sub:#6b7280;
+      --border:#e5e7eb;  --bg:#f3f4f6; --white:#fff;
+      --shadow:0 1px 4px rgba(0,0,0,.1);
+    }
+    body{font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans',sans-serif;
+         background:var(--bg);color:var(--text);font-size:15px;}
+
+    /* ===== ログイン ===== */
+    #login-screen{display:flex;flex-direction:column;align-items:center;
+                  justify-content:center;min-height:100vh;padding:24px;}
+    .login-box{background:var(--white);border-radius:16px;padding:32px 24px;
+               width:100%;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,.12);}
+    .login-logo{text-align:center;margin-bottom:24px;}
+    .login-logo .icon{font-size:3rem;}
+    .login-logo h1{font-size:1.25rem;color:var(--primary);margin-top:8px;font-weight:700;}
+    .login-logo p{font-size:.82rem;color:var(--sub);margin-top:4px;}
+
+    /* ===== 共通 ===== */
+    .hidden{display:none!important;}
+
+    /* ===== アプリ外枠 ===== */
+    #app-screen{display:flex;flex-direction:column;min-height:100vh;}
+    header.ah{background:var(--primary);color:#fff;padding:11px 16px;
+              display:flex;align-items:center;justify-content:space-between;
+              position:sticky;top:0;z-index:100;}
+    header.ah h1{font-size:.95rem;font-weight:700;}
+    .logout-btn{background:rgba(255,255,255,.2);border:none;color:#fff;
+                padding:5px 10px;border-radius:6px;font-size:.78rem;cursor:pointer;}
+    .user-name{font-size:.8rem;opacity:.85;}
+
+    .main{flex:1;padding:16px;padding-bottom:80px;max-width:600px;
+          margin:0 auto;width:100%;}
+
+    /* ===== ボトムナビ ===== */
+    .bnav{position:fixed;bottom:0;left:0;right:0;background:var(--white);
+          border-top:1px solid var(--border);display:flex;z-index:100;}
+    .bnav button{flex:1;padding:9px 4px 7px;border:none;background:none;
+                 font-size:.68rem;color:var(--sub);cursor:pointer;
+                 display:flex;flex-direction:column;align-items:center;gap:2px;}
+    .bnav button.active{color:var(--primary);font-weight:600;}
+    .bnav .ni{font-size:1.3rem;}
+
+    /* ===== カード ===== */
+    .card{background:var(--white);border-radius:12px;padding:16px;
+          box-shadow:var(--shadow);margin-bottom:12px;}
+
+    /* ===== フォーム ===== */
+    .fg{margin-bottom:13px;}
+    .fg label{display:block;font-size:.78rem;font-weight:600;
+              color:var(--sub);margin-bottom:4px;}
+    .fg input,.fg select,.fg textarea{
+      width:100%;padding:10px 12px;border:1.5px solid var(--border);
+      border-radius:8px;font-size:15px;background:var(--white);
+      -webkit-appearance:none;appearance:none;font-family:inherit;}
+    .fg input:focus,.fg select:focus{outline:none;border-color:var(--primary);}
+    .fg input[readonly]{background:#f9fafb;color:var(--sub);}
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+
+    /* ===== ボタン ===== */
+    .btn{padding:11px 16px;border-radius:8px;border:none;
+         font-size:.9rem;font-weight:600;cursor:pointer;font-family:inherit;}
+    .btn-p{background:var(--primary);color:#fff;width:100%;}
+    .btn-p:active{background:var(--primary-d);}
+    .btn-s{background:var(--bg);color:var(--text);border:1px solid var(--border);}
+    .btn-d{background:var(--danger-l);color:var(--danger);border:1px solid #fecaca;font-size:.82rem;padding:7px 12px;}
+    .btn-add{width:100%;padding:11px;border:2px dashed var(--primary);
+             border-radius:8px;background:var(--primary-l);color:var(--primary);
+             font-weight:600;cursor:pointer;font-size:.9rem;margin:6px 0;font-family:inherit;}
+    .btn-csv{width:100%;padding:12px;background:#1d4ed8;color:#fff;border:none;
+             border-radius:8px;font-size:.95rem;font-weight:600;cursor:pointer;font-family:inherit;}
+
+    /* ===== 重量明細 ===== */
+    .detail-block{border:1.5px solid var(--border);border-radius:10px;
+                  padding:13px;margin-bottom:10px;background:#fafafa;}
+    .detail-head{display:flex;align-items:center;justify-content:space-between;
+                 margin-bottom:10px;gap:8px;}
+    .detail-num{font-size:.78rem;font-weight:700;color:var(--primary);
+                background:var(--primary-l);padding:3px 8px;border-radius:99px;white-space:nowrap;}
+    .detail-method select{padding:6px 8px;border-radius:6px;
+                          border:1.5px solid var(--border);font-size:.85rem;
+                          background:var(--white);-webkit-appearance:none;}
+    .subtotal{background:var(--primary-l);border-radius:6px;padding:8px 12px;
+              text-align:center;font-weight:700;font-size:.95rem;
+              color:var(--primary);margin-top:8px;}
+
+    /* ===== 合計ボックス ===== */
+    .total-box{background:var(--primary);color:#fff;border-radius:12px;
+               padding:16px;text-align:center;margin:10px 0;}
+    .total-box .tl{font-size:.8rem;opacity:.85;}
+    .total-box .tv{font-size:1.7rem;font-weight:700;margin-top:2px;}
+    .kingaku-box{background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;
+                 padding:12px;text-align:right;margin-bottom:12px;}
+    .kingaku-box .kl{font-size:.75rem;color:var(--sub);}
+    .kingaku-box .kv{font-size:1.25rem;font-weight:700;color:var(--primary);}
+
+    /* ===== 一覧 ===== */
+    .filter-bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;}
+    .filter-bar input[type=date]{flex:1;padding:9px 12px;
+      border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;font-family:inherit;}
+    .ec{background:var(--white);border-radius:10px;padding:14px;
+        box-shadow:var(--shadow);margin-bottom:8px;}
+    .ec-goki{font-size:.72rem;font-weight:700;color:var(--primary);
+             background:var(--primary-l);padding:2px 8px;border-radius:99px;
+             display:inline-block;margin-bottom:5px;}
+    .ec-main{font-size:.95rem;font-weight:600;}
+    .ec-sub{font-size:.8rem;color:var(--sub);margin-top:2px;}
+    .ec-val{font-size:1.05rem;font-weight:700;color:var(--primary);margin-top:4px;}
+    .ec-acts{display:flex;gap:8px;margin-top:10px;}
+    .ec-acts button{flex:1;padding:8px;font-size:.8rem;border-radius:6px;
+                    border:none;cursor:pointer;font-weight:600;font-family:inherit;}
+    .btn-edit{background:#eff6ff;color:#1d4ed8;}
+    .btn-del{background:var(--danger-l);color:var(--danger);}
+    .summary-bar{background:var(--primary-l);border-radius:10px;padding:12px 14px;
+                 display:flex;justify-content:space-between;margin-bottom:10px;}
+    .summary-bar .sv{font-size:1rem;font-weight:700;color:var(--primary);}
+    .summary-bar .sl{font-size:.72rem;color:var(--sub);}
+
+    /* ===== 管理 ===== */
+    .user-item{display:flex;align-items:center;justify-content:space-between;
+               padding:12px;border-bottom:1px solid var(--border);}
+    .user-item:last-child{border-bottom:none;}
+    .role-badge{font-size:.7rem;padding:2px 8px;border-radius:99px;}
+    .role-admin{background:#fef3c7;color:#92400e;}
+    .role-member{background:#e0f2fe;color:#075985;}
+
+    /* ===== その他 ===== */
+    .sec-title{font-size:.78rem;font-weight:700;color:var(--sub);
+               margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase;}
+    .empty{text-align:center;color:var(--sub);padding:40px 0;font-size:.9rem;}
+    .loading{text-align:center;color:var(--sub);padding:20px;}
+    .err-msg{color:var(--danger);font-size:.82rem;margin-bottom:8px;display:none;}
+
+    .toast{position:fixed;bottom:82px;left:50%;transform:translateX(-50%);
+           background:#1f2937;color:#fff;padding:10px 20px;border-radius:8px;
+           font-size:.88rem;z-index:999;opacity:0;transition:opacity .3s;
+           white-space:nowrap;pointer-events:none;}
+    .toast.show{opacity:1;}
+
+    @media(min-width:600px){.main{padding:20px;}}
+  </style>
+</head>
+<body>
+
+<!-- ===== ログイン画面 ===== -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="icon">🧶</div>
+      <h1>棚卸しアプリ</h1>
+      <p>モマサレース</p>
+    </div>
+    <div class="fg">
+      <label>メールアドレス</label>
+      <input type="email" id="li-email" placeholder="example@example.com" autocomplete="email">
+    </div>
+    <div class="fg">
+      <label>パスワード</label>
+      <input type="password" id="li-pass" placeholder="パスワード" autocomplete="current-password">
+    </div>
+    <p id="li-err" class="err-msg"></p>
+    <button class="btn btn-p" onclick="doLogin()">ログイン</button>
+  </div>
+</div>
+
+<!-- ===== アプリ画面 ===== -->
+<div id="app-screen" class="hidden">
+  <header class="ah">
+    <h1>🧶 棚卸しアプリ</h1>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span class="user-name" id="hdr-name"></span>
+      <button class="logout-btn" onclick="doLogout()">ログアウト</button>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ========== 入力タブ ========== -->
+    <div id="tab-input">
+      <div class="sec-title">棚卸し入力</div>
+      <div class="card">
+        <div class="row2">
+          <div class="fg">
+            <label>棚卸し日付</label>
+            <input type="date" id="i-date">
+          </div>
+          <div class="fg">
+            <label>号機</label>
+            <select id="i-goki"></select>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="fg">
+            <label>区分</label>
+            <select id="i-kubun"></select>
+          </div>
+          <div class="fg">
+            <label>原料名</label>
+            <select id="i-genryo" onchange="onGenryoChange()"></select>
+          </div>
+        </div>
+        <div class="fg" id="decitex-wrap">
+          <label>デシテックス</label>
+          <input type="text" id="i-decitex" placeholder="自動入力">
+        </div>
+      </div>
+
+      <!-- 重量明細 -->
+      <div class="sec-title">重量明細</div>
+      <div id="detail-list"></div>
+      <button class="btn-add" onclick="addDetail()">＋ 明細を追加する</button>
+
+      <!-- 合計 -->
+      <div class="total-box">
+        <div class="tl">在庫数量合計</div>
+        <div class="tv" id="total-val">0.0 kg</div>
+      </div>
+
+      <!-- 原価・金額 -->
+      <div class="card">
+        <div class="row2">
+          <div class="fg" style="margin-bottom:0;">
+            <label>原価（円/kg）</label>
+            <input type="number" id="i-genka" placeholder="例: 1070" min="0" oninput="updateKingaku()">
+          </div>
+          <div class="fg" style="margin-bottom:0;">
+            <label>金額（自動計算）</label>
+            <input type="text" id="i-kingaku" readonly>
+          </div>
+        </div>
+      </div>
+
+      <!-- ボタン -->
+      <div style="display:flex;gap:10px;margin-top:4px;">
+        <button class="btn btn-s" style="flex:1;" onclick="resetForm()">リセット</button>
+        <button class="btn btn-p" style="flex:2;" onclick="saveEntry()" id="save-btn">保存する</button>
+      </div>
+    </div>
+
+    <!-- ========== 一覧タブ ========== -->
+    <div id="tab-list" class="hidden">
+      <div class="filter-bar">
+        <input type="date" id="l-date" onchange="loadList()">
+        <button class="btn btn-s btn" style="padding:9px 14px;font-size:.85rem;" onclick="loadList()">表示</button>
+      </div>
+      <div style="margin-bottom:10px;">
+        <button class="btn-csv" onclick="exportCSV()">📥 CSVダウンロード</button>
+      </div>
+      <div id="entry-list"><div class="empty">日付を選んでください</div></div>
+    </div>
+
+    <!-- ========== 管理タブ ========== -->
+    <div id="tab-admin" class="hidden">
+      <div class="sec-title">登録ユーザー</div>
+      <div class="card" style="padding:0;">
+        <div id="user-list"><div class="loading">読み込み中...</div></div>
+      </div>
+      <div class="sec-title" style="margin-top:16px;">新規ユーザー追加</div>
+      <div class="card">
+        <div class="row2">
+          <div class="fg">
+            <label>名前</label>
+            <input type="text" id="nu-name" placeholder="例: 鈴木">
+          </div>
+          <div class="fg">
+            <label>権限</label>
+            <select id="nu-role">
+              <option value="member">メンバー</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+        </div>
+        <div class="fg">
+          <label>メールアドレス</label>
+          <input type="email" id="nu-email" placeholder="suzuki@example.com">
+        </div>
+        <div class="fg">
+          <label>パスワード（6文字以上）</label>
+          <input type="password" id="nu-pass" placeholder="初期パスワード">
+        </div>
+        <p id="nu-err" class="err-msg"></p>
+        <button class="btn btn-p" onclick="addUser()">ユーザーを追加する</button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ボトムナビ -->
+  <nav class="bnav">
+    <button id="nav-input" class="active" onclick="switchTab('input')">
+      <span class="ni">✏️</span>入力
+    </button>
+    <button id="nav-list" onclick="switchTab('list')">
+      <span class="ni">📋</span>一覧
+    </button>
+    <button id="nav-admin" class="hidden" onclick="switchTab('admin')">
+      <span class="ni">⚙️</span>管理
+    </button>
+  </nav>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// Firebase設定（YOUR_〜 を書き換えてください）
+// ============================================================
+const FB_CFG = {
+  apiKey:            'AIzaSyB7xjh_e-tApAVMLcCBwwVuhiEop81RXSc',
+  authDomain:        'momasa-tanaoroshiapuri.firebaseapp.com',
+  projectId:         'momasa-tanaoroshiapuri',
+  storageBucket:     'momasa-tanaoroshiapuri.firebasestorage.app',
+  messagingSenderId: '958242513807',
+  appId:             '1:958242513807:web:33d74c2b28fd6ccf8021fa'
+};
+firebase.initializeApp(FB_CFG);
+const auth = firebase.auth();
+const db   = firebase.firestore();
+
+// ============================================================
+// マスタデータ
+// ============================================================
+const GOKI   = Array.from({length:13},(_,i)=>`${i+1}号機`);
+const KUBUN  = ['ヨコ糸','耳糸','耳糸線','柄糸A','柄糸B','力糸','サキ糸','送り糸'];
+const TUBES  = [
+  {name:'コーン',      g:80 },
+  {name:'パイナップル', g:200},
+  {name:'パーン',      g:500},
+];
+const MATS = [
+  {name:'BB.167/2',         dtx:'167/2'},
+  {name:'BD.110/1',         dtx:'110/1'},
+  {name:'TS.40/2YT',        dtx:'40/2' },
+  {name:'TTラミー20/2',      dtx:'20/2' },
+  {name:'TW.84/1CH',        dtx:'84/1' },
+  {name:'TW.84/2TJ',        dtx:'84/2' },
+  {name:'TW.84/2TR',        dtx:'84/2' },
+  {name:'TW.167/2SA',       dtx:'167/2'},
+  {name:'TW.330/1SL',       dtx:'330/1'},
+  {name:'TW.E167/1',        dtx:'167/1'},
+  {name:'TW.SE167/1',       dtx:'167/1'},
+  {name:'TW.SUZ167/1Y',     dtx:'167/1'},
+  {name:'シルサーB167/2',    dtx:'167/2'},
+  {name:'ブリアンスターSV75', dtx:'75D'  },
+  {name:'モノフィラ56TSX50', dtx:'56T'  },
+  {name:'リネンライク260T',   dtx:'260T' },
+  {name:'その他',            dtx:''     },
+];
+
+// ============================================================
+// 状態管理
+// ============================================================
+let CU     = null;   // currentUser
+let ROLE   = 'member';
+let ITEMS  = [];     // 重量明細配列
+let EDITID = null;   // 編集中ID
+let DIC    = 0;      // detailIdCounter
+
+// ============================================================
+// 認証
+// ============================================================
+auth.onAuthStateChanged(async u => {
+  if (u) {
+    CU = u;
+    const snap = await db.collection('users').doc(u.uid).get();
+    if (snap.exists) {
+      const d = snap.data();
+      ROLE = d.role || 'member';
+      document.getElementById('hdr-name').textContent = d.name || u.email;
+    } else {
+      ROLE = 'member';
+      document.getElementById('hdr-name').textContent = u.email;
+    }
+    showApp();
+  } else {
+    CU = null;
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('app-screen').classList.add('hidden');
+  }
+});
+
+async function doLogin() {
+  const email = document.getElementById('li-email').value.trim();
+  const pass  = document.getElementById('li-pass').value;
+  const err   = document.getElementById('li-err');
+  err.style.display = 'none';
+  try { await auth.signInWithEmailAndPassword(email, pass); }
+  catch(e) {
+    err.textContent = 'ログイン失敗。メールアドレスとパスワードを確認してください。';
+    err.style.display = 'block';
+  }
+}
+function doLogout() {
+  if (confirm('ログアウトしますか？')) auth.signOut();
+}
+
+// ============================================================
+// 画面遷移
+// ============================================================
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-screen').classList.remove('hidden');
+  document.getElementById('nav-admin').classList.toggle('hidden', ROLE !== 'admin');
+  initSelects();
+  resetForm();
+  switchTab('input');
+}
+
+function switchTab(t) {
+  ['input','list','admin'].forEach(x => {
+    document.getElementById(`tab-${x}`).classList.add('hidden');
+    const n = document.getElementById(`nav-${x}`);
+    if (n) n.classList.remove('active');
+  });
+  document.getElementById(`tab-${t}`).classList.remove('hidden');
+  const nb = document.getElementById(`nav-${t}`);
+  if (nb) nb.classList.add('active');
+  if (t === 'list') {
+    if (!document.getElementById('l-date').value)
+      document.getElementById('l-date').value = today();
+    loadList();
+  }
+  if (t === 'admin' && ROLE === 'admin') loadUsers();
+}
+
+// ============================================================
+// フォーム
+// ============================================================
+function initSelects() {
+  const gs = document.getElementById('i-goki');
+  if (!gs.options.length) GOKI.forEach(g => gs.add(new Option(g,g)));
+  const ks = document.getElementById('i-kubun');
+  if (!ks.options.length) KUBUN.forEach(k => ks.add(new Option(k,k)));
+  const ms = document.getElementById('i-genryo');
+  if (!ms.options.length) MATS.forEach(m => ms.add(new Option(m.name,m.name)));
+}
+
+function resetForm() {
+  EDITID = null; DIC = 0; ITEMS = [];
+  document.getElementById('i-date').value  = today();
+  document.getElementById('i-goki').selectedIndex  = 0;
+  document.getElementById('i-kubun').selectedIndex = 0;
+  document.getElementById('i-genryo').selectedIndex = 0;
+  document.getElementById('i-genka').value    = '';
+  document.getElementById('i-kingaku').value  = '';
+  document.getElementById('save-btn').textContent = '保存する';
+  onGenryoChange();
+  addDetail();
+  calcTotal();
+}
+
+function onGenryoChange() {
+  const name = document.getElementById('i-genryo').value;
+  const mat  = MATS.find(m => m.name === name);
+  const el   = document.getElementById('i-decitex');
+  if (mat && mat.dtx) {
+    el.value    = mat.dtx;
+    el.readOnly = true;
+  } else {
+    el.value    = '';
+    el.readOnly = false;
+    el.placeholder = '手入力してください';
+  }
+}
+
+// ============================================================
+// 重量明細
+// ============================================================
+function addDetail(src = null) {
+  const id = ++DIC;
+  ITEMS.push(src
+    ? {...src, id}
+    : {id, method:'クリル', tube:'コーン',
+       ippon:'', honsu:'',          // クリル用
+       total:'', hpc:'', cases:''}  // 段ボール用
+  );
+  renderDetails();
+}
+
+function removeDetail(id) {
+  if (ITEMS.length <= 1) { toast('明細は1件以上必要です'); return; }
+  ITEMS = ITEMS.filter(d => d.id !== id);
+  renderDetails();
+  calcTotal();
+}
+
+function setField(id, key, val) {
+  const it = ITEMS.find(d => d.id === id);
+  if (!it) return;
+  it[key] = val;
+  if (key === 'method') renderDetails();
+  else {
+    const st = calcSub(it);
+    const el = document.getElementById(`st-${id}`);
+    if (el) el.textContent = `小計：${st > 0 ? st.toFixed(2)+' kg' : '— kg'}`;
+  }
+  calcTotal();
+}
+
+function calcSub(it) {
+  const tw = (TUBES.find(t => t.name === it.tube) || TUBES[0]).g;
+  if (it.method === 'クリル') {
+    const iw = parseFloat(it.ippon);
+    const hn = parseFloat(it.honsu);
+    if (!iw || !hn || iw <= tw) return 0;
+    return Math.max(0, (iw - tw) * hn / 1000);
+  } else {
+    const tot = parseFloat(it.total);
+    const hpc = parseFloat(it.hpc) || 0;
+    const cs  = parseFloat(it.cases) || 1;
+    if (!tot) return 0;
+    return Math.max(0, (tot - 1000 - tw * hpc * cs) / 1000);
+  }
+}
+
+function calcTotal() {
+  const kg = ITEMS.reduce((s,d) => s + calcSub(d), 0);
+  document.getElementById('total-val').textContent = `${kg.toFixed(1)} kg`;
+  updateKingaku();
+  return kg;
+}
+
+function updateKingaku() {
+  const kg    = ITEMS.reduce((s,d) => s + calcSub(d), 0);
+  const genka = parseFloat(document.getElementById('i-genka').value) || 0;
+  document.getElementById('i-kingaku').value =
+    genka > 0 ? `¥${Math.round(kg * genka).toLocaleString()}` : '';
+}
+
+function renderDetails() {
+  const tubeOpts = TUBES.map(t =>
+    `<option value="${t.name}">${t.name}（${t.g}g）</option>`).join('');
+
+  document.getElementById('detail-list').innerHTML = ITEMS.map((it, idx) => {
+    const to = TUBES.map(t =>
+      `<option value="${t.name}" ${it.tube===t.name?'selected':''}>${t.name}（${t.g}g）</option>`
+    ).join('');
+    const mo = ['クリル','段ボール'].map(m =>
+      `<option value="${m}" ${it.method===m?'selected':''}>${m}</option>`).join('');
+    const st = calcSub(it);
+    const stTxt = st > 0 ? `${st.toFixed(2)} kg` : '— kg';
+
+    const fields = it.method === 'クリル' ? `
+      <div class="row2">
+        <div class="fg" style="margin-bottom:8px;">
+          <label>1本重量（g）</label>
+          <input type="number" min="0" step="0.1" value="${it.ippon}"
+            oninput="setField(${it.id},'ippon',this.value)" placeholder="例:850">
+        </div>
+        <div class="fg" style="margin-bottom:8px;">
+          <label>紙管の種類</label>
+          <select onchange="setField(${it.id},'tube',this.value)">${to}</select>
+        </div>
+      </div>
+      <div class="fg" style="margin-bottom:4px;">
+        <label>本数（同サイズの本数）</label>
+        <input type="number" min="0" step="1" value="${it.honsu}"
+          oninput="setField(${it.id},'honsu',this.value)" placeholder="例:48">
+      </div>
+    ` : `
+      <div class="row2">
+        <div class="fg" style="margin-bottom:8px;">
+          <label>総重量（g）</label>
+          <input type="number" min="0" step="1" value="${it.total}"
+            oninput="setField(${it.id},'total',this.value)" placeholder="例:15000">
+        </div>
+        <div class="fg" style="margin-bottom:8px;">
+          <label>紙管の種類</label>
+          <select onchange="setField(${it.id},'tube',this.value)">${to}</select>
+        </div>
+      </div>
+      <div class="row2" style="margin-bottom:4px;">
+        <div class="fg" style="margin-bottom:0;">
+          <label>本数/ケース</label>
+          <input type="number" min="0" step="1" value="${it.hpc}"
+            oninput="setField(${it.id},'hpc',this.value)" placeholder="例:12">
+        </div>
+        <div class="fg" style="margin-bottom:0;">
+          <label>ケース数</label>
+          <input type="number" min="0" step="1" value="${it.cases}"
+            oninput="setField(${it.id},'cases',this.value)" placeholder="例:2">
+        </div>
+      </div>
+    `;
+
+    return `
+      <div class="detail-block">
+        <div class="detail-head">
+          <span class="detail-num">明細 ${idx+1}</span>
+          <div style="display:flex;gap:6px;align-items:center;flex:1;justify-content:flex-end;">
+            <div class="detail-method">
+              <select onchange="setField(${it.id},'method',this.value)">${mo}</select>
+            </div>
+            <button class="btn btn-d" onclick="removeDetail(${it.id})">削除</button>
+          </div>
+        </div>
+        ${fields}
+        <div class="subtotal" id="st-${it.id}">小計：${stTxt}</div>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
+// 保存・更新
+// ============================================================
+async function saveEntry() {
+  const date   = document.getElementById('i-date').value;
+  const goki   = document.getElementById('i-goki').value;
+  const kubun  = document.getElementById('i-kubun').value;
+  const genryo = document.getElementById('i-genryo').value;
+  const decitex= document.getElementById('i-decitex').value.trim();
+  const genka  = parseFloat(document.getElementById('i-genka').value) || 0;
+  const zaikoKg= parseFloat(calcTotal().toFixed(3));
+  const kingaku= Math.round(zaikoKg * genka);
+
+  if (!date||!goki||!kubun||!genryo) { toast('日付・号機・区分・原料名を入力してください'); return; }
+  if (zaikoKg <= 0) { toast('在庫数量が0です。重量明細を確認してください'); return; }
+
+  const snap = await db.collection('users').doc(CU.uid).get();
+  const userName = snap.exists ? snap.data().name : CU.email;
+
+  const rec = {
+    date, goki, kubun,
+    genryoName: genryo, decitex,
+    details: ITEMS.map(d => ({...d})),
+    zaikoKg, genka, kingaku,
+    userId: CU.uid, userName,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  };
+
+  const btn = document.getElementById('save-btn');
+  btn.textContent = '保存中...';
+  btn.disabled = true;
+  try {
+    if (EDITID) {
+      await db.collection('inventory').doc(EDITID).update(rec);
+      toast('更新しました ✅');
+    } else {
+      rec.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection('inventory').add(rec);
+      toast('保存しました ✅');
+    }
+    resetForm();
+  } catch(e) {
+    console.error(e);
+    toast('保存に失敗しました');
+  } finally {
+    btn.textContent = EDITID ? '更新する' : '保存する';
+    btn.disabled = false;
+  }
+}
+
+// ============================================================
+// 一覧表示
+// ============================================================
+async function loadList() {
+  const date = document.getElementById('l-date').value;
+  if (!date) return;
+  const el = document.getElementById('entry-list');
+  el.innerHTML = '<div class="loading">読み込み中...</div>';
+  try {
+    const sn = await db.collection('inventory')
+      .where('date','==',date)
+      .orderBy('goki')
+      .orderBy('createdAt')
+      .get();
+    if (sn.empty) { el.innerHTML='<div class="empty">この日のデータはありません</div>'; return; }
+    const list = [];
+    sn.forEach(d => list.push({id:d.id,...d.data()}));
+    renderList(el, list);
+  } catch(e) {
+    console.error(e);
+    el.innerHTML = '<div class="empty">読み込みに失敗しました<br>インデックス未作成の可能性があります</div>';
+  }
+}
+
+function renderList(el, list) {
+  const totalKg = list.reduce((s,e) => s+(e.zaikoKg||0), 0);
+  const totalKn = list.reduce((s,e) => s+(e.kingaku||0), 0);
+
+  const summary = `
+    <div class="summary-bar">
+      <div><div class="sl">合計在庫</div>
+           <div class="sv">${totalKg.toFixed(1)} kg</div></div>
+      <div style="text-align:right;"><div class="sl">合計金額</div>
+           <div class="sv">¥${totalKn.toLocaleString()}</div></div>
+    </div>`;
+
+  const items = list.map(e => `
+    <div class="ec">
+      <span class="ec-goki">${e.goki}</span>
+      <div class="ec-main">${e.kubun} ／ ${e.genryoName}</div>
+      <div class="ec-sub">デシテックス: ${e.decitex||'—'} ／ 入力: ${e.userName||'—'}</div>
+      <div class="ec-val">${(e.zaikoKg||0).toFixed(1)} kg
+        ${e.genka?`<span style="font-size:.8rem;color:var(--sub);font-weight:400;">
+          ／ @${e.genka.toLocaleString()}円 ／ ¥${(e.kingaku||0).toLocaleString()}</span>`:''}
+      </div>
+      <div class="ec-acts">
+        <button class="btn-edit" onclick="editEntry('${e.id}')">編集</button>
+        <button class="btn-del"  onclick="delEntry('${e.id}')">削除</button>
+      </div>
+    </div>`).join('');
+
+  el.innerHTML = summary + items;
+}
+
+async function editEntry(id) {
+  try {
+    const doc = await db.collection('inventory').doc(id).get();
+    if (!doc.exists) { toast('データが見つかりません'); return; }
+    const d = doc.data();
+    EDITID = id; DIC = 0; ITEMS = [];
+    document.getElementById('i-date').value  = d.date;
+    document.getElementById('i-goki').value  = d.goki;
+    document.getElementById('i-kubun').value = d.kubun;
+    document.getElementById('i-genryo').value = d.genryoName;
+    document.getElementById('i-decitex').value = d.decitex||'';
+    document.getElementById('i-genka').value  = d.genka||'';
+    document.getElementById('save-btn').textContent = '更新する';
+    (d.details||[]).forEach(x => addDetail(x));
+    calcTotal();
+    switchTab('input');
+    window.scrollTo(0,0);
+  } catch(e) { console.error(e); toast('読み込みに失敗しました'); }
+}
+
+async function delEntry(id) {
+  if (!confirm('このデータを削除しますか？')) return;
+  try {
+    await db.collection('inventory').doc(id).delete();
+    toast('削除しました');
+    loadList();
+  } catch(e) { toast('削除に失敗しました'); }
+}
+
+// ============================================================
+// CSV出力
+// ============================================================
+async function exportCSV() {
+  const date = document.getElementById('l-date').value;
+  if (!date) { toast('日付を選択してください'); return; }
+  try {
+    const sn = await db.collection('inventory')
+      .where('date','==',date)
+      .orderBy('goki')
+      .orderBy('createdAt')
+      .get();
+    if (sn.empty) { toast('出力するデータがありません'); return; }
+
+    const rows = [['号機','区分','原料名','デシテックス','在庫数量(kg)','@','原価(円/kg)','金額(円)','入力者','入力日時']];
+    sn.forEach(doc => {
+      const d  = doc.data();
+      const dt = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP') : '';
+      rows.push([d.goki, d.kubun, d.genryoName, d.decitex||'',
+                 (d.zaikoKg||0).toFixed(3), '@',
+                 d.genka||'', d.kingaku||'', d.userName||'', dt]);
+    });
+
+    const bom = '\uFEFF';
+    const csv = bom + rows.map(r =>
+      r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')
+    ).join('\r\n');
+
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'})),
+      download: `棚卸し_${date}.csv`
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('CSVをダウンロードしました 📥');
+  } catch(e) { console.error(e); toast('CSV出力に失敗しました'); }
+}
+
+// ============================================================
+// ユーザー管理
+// ============================================================
+async function loadUsers() {
+  const el = document.getElementById('user-list');
+  el.innerHTML = '<div class="loading">読み込み中...</div>';
+  try {
+    const sn = await db.collection('users').orderBy('name').get();
+    if (sn.empty) { el.innerHTML='<div class="empty">ユーザーなし</div>'; return; }
+    let html = '';
+    sn.forEach(doc => {
+      const d = doc.data();
+      html += `
+        <div class="user-item">
+          <div>
+            <div style="font-weight:600;">${d.name||'—'}</div>
+            <div style="font-size:.78rem;color:var(--sub);">${d.email||'—'}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="role-badge ${d.role==='admin'?'role-admin':'role-member'}">
+              ${d.role==='admin'?'管理者':'メンバー'}</span>
+            ${doc.id !== CU.uid
+              ? `<button class="btn btn-d" onclick="delUser('${doc.id}')">削除</button>`
+              : '<span style="font-size:.75rem;color:var(--sub);">（自分）</span>'}
+          </div>
+        </div>`;
+    });
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML='<div class="empty">読み込みに失敗しました</div>'; }
+}
+
+async function addUser() {
+  const name  = document.getElementById('nu-name').value.trim();
+  const email = document.getElementById('nu-email').value.trim();
+  const pass  = document.getElementById('nu-pass').value;
+  const role  = document.getElementById('nu-role').value;
+  const err   = document.getElementById('nu-err');
+  err.style.display = 'none';
+
+  if (!name||!email||!pass) {
+    err.textContent='全項目を入力してください'; err.style.display='block'; return;
+  }
+  if (pass.length < 6) {
+    err.textContent='パスワードは6文字以上にしてください'; err.style.display='block'; return;
+  }
+  try {
+    // サブAppで作成（現在のログイン状態を維持）
+    const sub = firebase.initializeApp(FB_CFG, `sub_${Date.now()}`);
+    const r   = await firebase.auth(sub).createUserWithEmailAndPassword(email, pass);
+    await db.collection('users').doc(r.user.uid).set({
+      name, email, role,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    await firebase.auth(sub).signOut();
+    await sub.delete();
+    ['nu-name','nu-email','nu-pass'].forEach(id => document.getElementById(id).value='');
+    toast(`${name} さんを追加しました ✅`);
+    loadUsers();
+  } catch(e) {
+    console.error(e);
+    err.textContent = e.code==='auth/email-already-in-use'
+      ? 'このメールアドレスは既に登録されています'
+      : '追加に失敗しました: '+e.message;
+    err.style.display = 'block';
+  }
+}
+
+async function delUser(uid) {
+  if (!confirm('このユーザーをリストから削除しますか？')) return;
+  try {
+    await db.collection('users').doc(uid).delete();
+    toast('削除しました');
+    loadUsers();
+  } catch(e) { toast('削除に失敗しました'); }
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+function today() {
+  return new Date().toLocaleDateString('sv-SE');
+}
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+// Enterキーでログイン
+document.addEventListener('DOMContentLoaded', () => {
+  ['li-email','li-pass'].forEach(id =>
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    })
+  );
+});
+</script>
+</body>
+</html>
