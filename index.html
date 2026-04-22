@@ -545,13 +545,13 @@ function calcSub(it) {
     if (!iw || !hn || iw <= tw) return 0;
     return Math.max(0, (iw - tw) * hn / 1000);
   } else {
-    // 段ボール計算:
-    //   総重量 - 段ボール箱重量(1kg × ケース数) - 紙管重量(紙管g × 本数/ケース × ケース数)
-    const tot = parseFloat(it.total);
+    // 段ボール計算（総重量はkg単位で入力）:
+    //   総重量(kg) - 段ボール箱重量(1kg × ケース数) - 紙管重量(tw_g × 本数/ケース × ケース数 ÷ 1000)
+    const tot = parseFloat(it.total);  // kg
     const hpc = parseFloat(it.hpc) || 0;
     const cs  = parseFloat(it.cases) || 1;
     if (!tot) return 0;
-    return Math.max(0, (tot - 1000 * cs - tw * hpc * cs) / 1000);
+    return Math.max(0, tot - cs * 1 - (tw * hpc * cs / 1000));
   }
 }
 
@@ -602,9 +602,9 @@ function renderDetails() {
     ` : `
       <div class="row2">
         <div class="fg" style="margin-bottom:8px;">
-          <label>総重量（g）</label>
-          <input type="number" min="0" step="1" value="${it.total}"
-            oninput="setField(${it.id},'total',this.value)" placeholder="例:15000">
+          <label>総重量（kg）</label>
+          <input type="number" min="0" step="0.1" value="${it.total}"
+            oninput="setField(${it.id},'total',this.value)" placeholder="例:200">
         </div>
         <div class="fg" style="margin-bottom:8px;">
           <label>紙管の種類</label>
