@@ -512,7 +512,7 @@ function addDetail(src = null) {
     ? {...src, id}
     : {id, method:'クリル', tube:'コーン',
        ippon:'', honsu:'',          // クリル用
-       total:'', hpc:'', cases:''}  // 段ボール用
+       ippon_dan:'', hpc:'', cases:''}  // 段ボール用
   );
   renderDetails();
 }
@@ -545,13 +545,18 @@ function calcSub(it) {
     if (!iw || !hn || iw <= tw) return 0;
     return Math.max(0, (iw - tw) * hn / 1000);
   } else {
-    // 段ボール計算（総重量はkg単位で入力）:
-    //   総重量(kg) - 段ボール箱重量(1kg × ケース数) - 紙管重量(tw_g × 本数/ケース × ケース数 ÷ 1000)
-    const tot = parseFloat(it.total);  // kg
-    const hpc = parseFloat(it.hpc) || 0;
-    const cs  = parseFloat(it.cases) || 1;
-    if (!tot) return 0;
-    return Math.max(0, tot - cs * 1 - (tw * hpc * cs / 1000));
+    // 段ボール計算:
+    //   ① 1本の重さ(g) × hpc × cs = 紙管込みの合計重量(g)
+    //   ② 紙管の重さ(g) × hpc × cs = 紙管合計重量(g)
+    //   ③ (① - ②) ÷ 1000 = 純粋な糸の重さ(kg)
+    //   ④ ③ - ケース数 × 1kg（段ボール分）= 最終結果(kg)
+    const ippon = parseFloat(it.ippon_dan); // 1本の重さ(g)
+    const hpc   = parseFloat(it.hpc) || 0;
+    const cs    = parseFloat(it.cases) || 1;
+    if (!ippon || ippon <= tw) return 0;
+    const netPerCone = ippon - tw;           // 1本あたり純糸重量(g)
+    const netKg = netPerCone * hpc * cs / 1000; // 全体の純糸重量(kg)
+    return Math.max(0, netKg - cs);          // 段ボール重量(1kg×ケース数)を差し引く
   }
 }
 
@@ -602,9 +607,9 @@ function renderDetails() {
     ` : `
       <div class="row2">
         <div class="fg" style="margin-bottom:8px;">
-          <label>総重量（kg）</label>
-          <input type="number" min="0" step="0.1" value="${it.total}"
-            oninput="setField(${it.id},'total',this.value)" placeholder="例:200">
+          <label>1本の重さ（g）</label>
+          <input type="number" min="0" step="0.1" value="${it.ippon_dan||''}"
+            oninput="setField(${it.id},'ippon_dan',this.value)" placeholder="例:850">
         </div>
         <div class="fg" style="margin-bottom:8px;">
           <label>紙管の種類</label>
@@ -614,13 +619,13 @@ function renderDetails() {
       <div class="row2" style="margin-bottom:4px;">
         <div class="fg" style="margin-bottom:0;">
           <label>本数/ケース</label>
-          <input type="number" min="0" step="1" value="${it.hpc}"
-            oninput="setField(${it.id},'hpc',this.value)" placeholder="例:12">
+          <input type="number" min="0" step="1" value="${it.hpc||''}"
+            oninput="setField(${it.id},'hpc',this.value)" placeholder="例:30">
         </div>
         <div class="fg" style="margin-bottom:0;">
           <label>ケース数</label>
-          <input type="number" min="0" step="1" value="${it.cases}"
-            oninput="setField(${it.id},'cases',this.value)" placeholder="例:2">
+          <input type="number" min="0" step="1" value="${it.cases||''}"
+            oninput="setField(${it.id},'cases',this.value)" placeholder="例:3">
         </div>
       </div>
     `;
