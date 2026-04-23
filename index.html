@@ -511,8 +511,9 @@ function addDetail(src = null) {
   ITEMS.push(src
     ? {...src, id}
     : {id, method:'クリル', tube:'コーン',
-       ippon:'', honsu:'',          // クリル用
-       ippon_dan:'', hpc:'', cases:''}  // 段ボール用
+       ippon:'', honsu:'',              // クリル用
+       ippon_dan:'', hpc:'', cases:'',  // 段ボール（本単位）用
+       box_weight:''}                   // 箱計り用
   );
   renderDetails();
 }
@@ -544,19 +545,24 @@ function calcSub(it) {
     const hn = parseFloat(it.honsu);
     if (!iw || !hn || iw <= tw) return 0;
     return Math.max(0, (iw - tw) * hn / 1000);
-  } else {
-    // 段ボール計算:
-    //   ① 1本の重さ(g) × hpc × cs = 紙管込みの合計重量(g)
-    //   ② 紙管の重さ(g) × hpc × cs = 紙管合計重量(g)
-    //   ③ (① - ②) ÷ 1000 = 純粋な糸の重さ(kg)
-    //   ④ ③ - ケース数 × 1kg（段ボール分）= 最終結果(kg)
-    const ippon = parseFloat(it.ippon_dan); // 1本の重さ(g)
+  } else if (it.method === '段ボール') {
+    // 段ボール（本単位）計算:
+    //   (1本の重さ - 紙管重量) × 本数/ケース × ケース数 ÷ 1000 - ケース数×1kg
+    const ippon = parseFloat(it.ippon_dan);
     const hpc   = parseFloat(it.hpc) || 0;
     const cs    = parseFloat(it.cases) || 1;
     if (!ippon || ippon <= tw) return 0;
-    const netPerCone = ippon - tw;           // 1本あたり純糸重量(g)
-    const netKg = netPerCone * hpc * cs / 1000; // 全体の純糸重量(kg)
-    return Math.max(0, netKg - cs);          // 段ボール重量(1kg×ケース数)を差し引く
+    return Math.max(0, (ippon - tw) * hpc * cs / 1000 - cs);
+  } else {
+    // 箱計り計算:
+    //   ((一箱の重量(g) - 段ボール自体(1000g)) - 紙管重量(g) × 本数/ケース) × ケース数 ÷ 1000
+    const bw  = parseFloat(it.box_weight);  // 一箱の重量(g)
+    const hpc = parseFloat(it.hpc) || 0;
+    const cs  = parseFloat(it.cases) || 1;
+    if (!bw) return 0;
+    const netPerBox = (bw - 1000) - (tw * hpc); // 1箱あたりの純糸重量(g)
+    if (netPerBox <= 0) return 0;
+    return Math.max(0, netPerBox * cs / 1000);
   }
 }
 
@@ -582,7 +588,7 @@ function renderDetails() {
     const to = TUBES.map(t =>
       `<option value="${t.name}" ${it.tube===t.name?'selected':''}>${t.name}（${t.g}g）</option>`
     ).join('');
-    const mo = ['クリル','段ボール'].map(m =>
+    const mo = ['クリル','段ボール','箱計り'].map(m =>
       `<option value="${m}" ${it.method===m?'selected':''}>${m}</option>`).join('');
     const st = calcSub(it);
     const stTxt = st > 0 ? `${st.toFixed(2)} kg` : '— kg';
@@ -604,12 +610,36 @@ function renderDetails() {
         <input type="number" min="0" step="1" value="${it.honsu}"
           oninput="setField(${it.id},'honsu',this.value)" placeholder="例:48">
       </div>
-    ` : `
+    ` : it.method === '段ボール' ? `
       <div class="row2">
         <div class="fg" style="margin-bottom:8px;">
           <label>1本の重さ（g）</label>
           <input type="number" min="0" step="0.1" value="${it.ippon_dan||''}"
             oninput="setField(${it.id},'ippon_dan',this.value)" placeholder="例:850">
+        </div>
+        <div class="fg" style="margin-bottom:8px;">
+          <label>紙管の種類</label>
+          <select onchange="setField(${it.id},'tube',this.value)">${to}</select>
+        </div>
+      </div>
+      <div class="row2" style="margin-bottom:4px;">
+        <div class="fg" style="margin-bottom:0;">
+          <label>本数/ケース</label>
+          <input type="number" min="0" step="1" value="${it.hpc||''}"
+            oninput="setField(${it.id},'hpc',this.value)" placeholder="例:30">
+        </div>
+        <div class="fg" style="margin-bottom:0;">
+          <label>ケース数</label>
+          <input type="number" min="0" step="1" value="${it.cases||''}"
+            oninput="setField(${it.id},'cases',this.value)" placeholder="例:3">
+        </div>
+      </div>
+    ` : `
+      <div class="row2">
+        <div class="fg" style="margin-bottom:8px;">
+          <label>一箱の重量（g）</label>
+          <input type="number" min="0" step="1" value="${it.box_weight||''}"
+            oninput="setField(${it.id},'box_weight',this.value)" placeholder="例:26000">
         </div>
         <div class="fg" style="margin-bottom:8px;">
           <label>紙管の種類</label>
